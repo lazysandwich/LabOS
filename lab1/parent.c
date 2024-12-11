@@ -49,7 +49,7 @@ int main() {
             write(pipe1[1], buffer, strlen(buffer));
         }
         close(pipe1[1]);
-        wait(NULL); // Ожидаем завершения дочернего процесса
+        wait(NULL);
     }
     return 0;
 }
