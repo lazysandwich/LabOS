@@ -1,0 +1,127 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <time.h>
+
+typedef struct {
+    float **input;
+    float **output;
+    float **kernel;
+    int start_row;
+    int end_row;
+    int size;
+    int kernel_size;
+} ThreadData;
+
+int max_threads = 2;
+pthread_mutex_t thread_count_mutex;
+int active_threads = 0;
+
+void *apply_filter(void *arg) {
+    ThreadData *data = (ThreadData *)arg;
+    int offset = data->kernel_size / 2;
+    for (int i = data->start_row; i < data->end_row; i++) {
+        for (int j = 0; j < data->size; j++) {
+            float sum = 0.0;
+            for (int ki = 0; ki < data->kernel_size; ki++) {
+                for (int kj = 0; kj < data->kernel_size; kj++) {
+                    int ni = i + ki - offset;
+                    int nj = j + kj - offset;
+                    if (ni >= 0 && ni < data->size && nj >= 0 && nj < data->size) {
+                        sum += data->input[ni][nj] * data->kernel[ki][kj];
+                    }
+                }
+            }
+            data->output[i][j] = sum;
+        }
+    }
+    pthread_mutex_lock(&thread_count_mutex);
+    active_threads--;
+    pthread_mutex_unlock(&thread_count_mutex);
+    return NULL;
+}
+
+float **create_matrix(int size) {
+    float **matrix = malloc(size * sizeof(float *));
+    for (int i = 0; i < size; i++) {
+        matrix[i] = malloc(size * sizeof(float));
+    }
+    return matrix;
+}
+
+void free_matrix(float **matrix, int size) {
+    for (int i = 0; i < size; i++) {
+        free(matrix[i]);
+    }
+    free(matrix);
+}
+
+void fill_matrix_random(float **matrix, int size) {
+    for (int i = 0; i < size; i++) {
+        for (int j = 0; j < size; j++) {
+            matrix[i][j] = rand() % 100 / 10.0;
+        }
+    }
+}
+
+void print_matrix(float **matrix, int size) {
+    for (int i = 0; i < size; i++) {
+        for (int j = 0; j < size; j++) {
+            printf("%6.2f ", matrix[i][j]);
+        }
+        printf("\n");
+    }
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 4) {
+        printf("Использование: %s <размер матрицы> <размер ядра фильтра> <максимальное кол-во потоков>\n", argv[0]);
+    return 1;
+    }
+    int matrix_size = atoi(argv[1]);
+    int kernel_size = atoi(argv[2]);
+    max_threads = atoi(argv[3]);
+    pthread_mutex_init(&thread_count_mutex, NULL);
+    srand(time(NULL));
+    float **input_matrix = create_matrix(matrix_size);
+    float **output_matrix = create_matrix(matrix_size);
+    float **kernel = create_matrix(kernel_size);
+    fill_matrix_random(input_matrix, matrix_size);
+    fill_matrix_random(kernel, kernel_size);
+    printf("Исходная матрица:\n");
+    print_matrix(input_matrix, matrix_size);
+    printf("\nЯдро фильтра:\n");
+    print_matrix(kernel, kernel_size);
+    pthread_t threads[max_threads];
+    ThreadData thread_data[max_threads];
+    int rows_per_thread = matrix_size / max_threads;
+    clock_t start_time = clock();
+    for (int i = 0; i < max_threads; i++) {
+        thread_data[i].input = input_matrix;
+        thread_data[i].output = output_matrix;
+        thread_data[i].kernel = kernel;
+        thread_data[i].size = matrix_size;
+        thread_data[i].kernel_size = kernel_size;
+        thread_data[i].start_row = i * rows_per_thread;
+        thread_data[i].end_row = (i == max_threads - 1) ? matrix_size : (i + 1) * rows_per_thread;
+        pthread_mutex_lock(&thread_count_mutex);
+        active_threads++;
+        pthread_mutex_unlock(&thread_count_mutex);
+        pthread_create(&threads[i], NULL, apply_filter, &thread_data[i]);
+    }
+    for (int i = 0; i < max_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+    clock_t end_time = clock();
+    double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+    printf("\nРезультирующая матрица:\n");
+    print_matrix(output_matrix, matrix_size);
+    printf("\nВремя выполнения: %.2f секунд\n", elapsed_time);
+    printf("%ld, %ld", start_time ,end_time);
+    free_matrix(input_matrix, matrix_size);
+    free_matrix(output_matrix, matrix_size);
+    free_matrix(kernel, kernel_size);
+    pthread_mutex_destroy(&thread_count_mutex);
+    return 0;
+}
