@@ -118,7 +118,6 @@ int main(int argc, char *argv[]) {
     printf("\nРезультирующая матрица:\n");
     print_matrix(output_matrix, matrix_size);
     printf("\nВремя выполнения: %.2f секунд\n", elapsed_time);
-    printf("%ld, %ld", start_time ,end_time);
     free_matrix(input_matrix, matrix_size);
     free_matrix(output_matrix, matrix_size);
     free_matrix(kernel, kernel_size);
