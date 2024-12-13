@@ -1,126 +1,145 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <string.h>
 #include <unistd.h>
 #include <time.h>
 
-typedef struct {
-    float **input;
-    float **output;
-    float **kernel;
-    int start_row;
-    int end_row;
-    int size;
-    int kernel_size;
-} ThreadData;
+#define MAX_MATRIX_SIZE 1000
 
-int max_threads = 2;
-pthread_mutex_t thread_count_mutex;
-int active_threads = 0;
+int num_threads;
+int matrix_size;
+int filter_iterations;
+double **matrix;
+double **result;
+int filter_size;
+
+pthread_mutex_t lock; // Мьютекс для синхронизации потоков
 
 void *apply_filter(void *arg) {
-    ThreadData *data = (ThreadData *)arg;
-    int offset = data->kernel_size / 2;
-    for (int i = data->start_row; i < data->end_row; i++) {
-        for (int j = 0; j < data->size; j++) {
-            float sum = 0.0;
-            for (int ki = 0; ki < data->kernel_size; ki++) {
-                for (int kj = 0; kj < data->kernel_size; kj++) {
-                    int ni = i + ki - offset;
-                    int nj = j + kj - offset;
-                    if (ni >= 0 && ni < data->size && nj >= 0 && nj < data->size) {
-                        sum += data->input[ni][nj] * data->kernel[ki][kj];
+    int thread_id = *(int *)arg;
+    int chunk_size = matrix_size / num_threads;
+    int start = thread_id * chunk_size;
+    int end = (thread_id == num_threads - 1) ? matrix_size : start + chunk_size;
+    for (int iter = 0; iter < filter_iterations; iter++) {
+        for (int i = start; i < end; i++) {
+            for (int j = 0; j < matrix_size; j++) {
+                double sum = 0.0;
+                for (int fi = -filter_size / 2; fi <= filter_size / 2; fi++) {
+                    for (int fj = -filter_size / 2; fj <= filter_size / 2; fj++) {
+                        int ni = i + fi, nj = j + fj;
+                        if (ni >= 0 && ni < matrix_size && nj >= 0 && nj < matrix_size) {
+                            sum += matrix[ni][nj];
+                        }
                     }
                 }
+                int size_lenght;
+                int size_high;
+                if (i < filter_size / 2) {
+                    size_lenght = filter_size / 2 + i + 1;
+                }
+                else if (matrix_size - i - 1 < filter_size / 2) {
+                    size_lenght = filter_size / 2 + matrix_size - i;
+                }
+                else {
+                    size_lenght = filter_size;
+                }
+                if (j < filter_size / 2) {
+                    size_high = filter_size / 2 + j + 1;
+                }
+                else if (matrix_size - j - 1 < filter_size / 2) {
+                    size_high = filter_size / 2 + matrix_size - j;
+                }
+                else {
+                    size_high = filter_size;
+                }
+                result[i][j] = sum / (size_lenght * size_high);
             }
-            data->output[i][j] = sum;
         }
+        pthread_mutex_lock(&lock);
+        double **temp = matrix;
+        matrix = result;
+        result = temp;
+        pthread_mutex_unlock(&lock);
     }
-    pthread_mutex_lock(&thread_count_mutex);
-    active_threads--;
-    pthread_mutex_unlock(&thread_count_mutex);
     return NULL;
 }
 
-float **create_matrix(int size) {
-    float **matrix = malloc(size * sizeof(float *));
-    for (int i = 0; i < size; i++) {
-        matrix[i] = malloc(size * sizeof(float));
-    }
-    return matrix;
-}
-
-void free_matrix(float **matrix, int size) {
-    for (int i = 0; i < size; i++) {
-        free(matrix[i]);
-    }
-    free(matrix);
-}
-
-void fill_matrix_random(float **matrix, int size) {
-    for (int i = 0; i < size; i++) {
-        for (int j = 0; j < size; j++) {
-            matrix[i][j] = rand() % 100 / 10.0;
+void initialize_matrix() {
+    matrix = malloc(matrix_size * sizeof(double *));
+    result = malloc(matrix_size * sizeof(double *));
+    for (int i = 0; i < matrix_size; i++) {
+        matrix[i] = malloc(matrix_size * sizeof(double));
+        result[i] = malloc(matrix_size * sizeof(double));
+        for (int j = 0; j < matrix_size; j++) {
+            matrix[i][j] = rand() % 100;
+            result[i][j] = 0.0;
         }
     }
 }
 
-void print_matrix(float **matrix, int size) {
-    for (int i = 0; i < size; i++) {
-        for (int j = 0; j < size; j++) {
-            printf("%6.2f ", matrix[i][j]);
+void free_matrix() {
+    for (int i = 0; i < matrix_size; i++) {
+        free(matrix[i]);
+        free(result[i]);
+    }
+    free(matrix);
+    free(result);
+}
+
+void print_matrix(double **mat, const char *title) {
+    printf("%s:\n", title);
+    for (int i = 0; i < matrix_size; i++) {
+        for (int j = 0; j < matrix_size; j++) {
+            printf("%.2f ", mat[i][j]);
         }
         printf("\n");
     }
+    printf("\n");
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 4) {
-        printf("Использование: %s <размер матрицы> <размер ядра фильтра> <максимальное кол-во потоков>\n", argv[0]);
-    return 1;
+    if (argc != 5) {
+        printf("Использование: %s <размер_матрицы> <размер_фильтра> <итераций_фильтра> <количество_потоков>\n", argv[0]);
+        return 1;
     }
-    int matrix_size = atoi(argv[1]);
-    int kernel_size = atoi(argv[2]);
-    max_threads = atoi(argv[3]);
-    pthread_mutex_init(&thread_count_mutex, NULL);
-    srand(time(NULL));
-    float **input_matrix = create_matrix(matrix_size);
-    float **output_matrix = create_matrix(matrix_size);
-    float **kernel = create_matrix(kernel_size);
-    fill_matrix_random(input_matrix, matrix_size);
-    fill_matrix_random(kernel, kernel_size);
-    printf("Исходная матрица:\n");
-    print_matrix(input_matrix, matrix_size);
-    printf("\nЯдро фильтра:\n");
-    print_matrix(kernel, kernel_size);
-    pthread_t threads[max_threads];
-    ThreadData thread_data[max_threads];
-    int rows_per_thread = matrix_size / max_threads;
+    matrix_size = atoi(argv[1]);
+    filter_size = atoi(argv[2]);
+    if (filter_size % 2 == 0) {
+        printf("размер_фильтра должен быть нечётным");
+        return 1;
+    }
+    filter_iterations = atoi(argv[3]);
+    num_threads = atoi(argv[4]);
+    if (matrix_size <= 0 || filter_size <= 0 || filter_iterations <= 0 || num_threads <= 0) {
+        printf("Все параметры должны быть положительными целыми числами.\n");
+        return 1;
+    }
+    if (matrix_size > MAX_MATRIX_SIZE) {
+        printf("Размер матрицы превышает максимально допустимый (%d).\n", MAX_MATRIX_SIZE);
+        return 1;
+    }
+    initialize_matrix();
+    print_matrix(matrix, "Начальная матрица");
+    pthread_t threads[num_threads];
+    int thread_ids[num_threads];
+    pthread_mutex_init(&lock, NULL);
     clock_t start_time = clock();
-    for (int i = 0; i < max_threads; i++) {
-        thread_data[i].input = input_matrix;
-        thread_data[i].output = output_matrix;
-        thread_data[i].kernel = kernel;
-        thread_data[i].size = matrix_size;
-        thread_data[i].kernel_size = kernel_size;
-        thread_data[i].start_row = i * rows_per_thread;
-        thread_data[i].end_row = (i == max_threads - 1) ? matrix_size : (i + 1) * rows_per_thread;
-        pthread_mutex_lock(&thread_count_mutex);
-        active_threads++;
-        pthread_mutex_unlock(&thread_count_mutex);
-        pthread_create(&threads[i], NULL, apply_filter, &thread_data[i]);
+    for (int i = 0; i < num_threads; i++) {
+        thread_ids[i] = i;
+        if (pthread_create(&threads[i], NULL, apply_filter, &thread_ids[i]) != 0) {
+            perror("pthread_create");
+            return 1;
+        }
     }
-    for (int i = 0; i < max_threads; i++) {
+    for (int i = 0; i < num_threads; i++) {
         pthread_join(threads[i], NULL);
     }
     clock_t end_time = clock();
-    double elapsed_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
-    printf("\nРезультирующая матрица:\n");
-    print_matrix(output_matrix, matrix_size);
-    printf("\nВремя выполнения: %.2f секунд\n", elapsed_time);
-    free_matrix(input_matrix, matrix_size);
-    free_matrix(output_matrix, matrix_size);
-    free_matrix(kernel, kernel_size);
-    pthread_mutex_destroy(&thread_count_mutex);
+    double time_spent = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+    pthread_mutex_destroy(&lock);
+    print_matrix(matrix, "Фильтрованная матрица");
+    printf("Время, затраченное на фильтрацию: %.6f секунд\n", time_spent);
+    free_matrix();
     return 0;
 }
