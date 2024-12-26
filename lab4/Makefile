@@ -1,19 +1,12 @@
-CC = cc
-CFLAGS = -Wall -Wextra -lm -ldl
-TARGET = main list.so degree2.so
+CC = clang
 
-build: ${TARGET}
-
-main: main.c
-	${CC} ${CFLAGS} -o $@ $<
-
-blocks.so: blocks.c
-	${CC} ${CFLAGS} -shared -fPIC -o $@ $<
-
-doubles.so: doubles.c
-	${CC} ${CFLAGS} -shared -fPIC -o $@ $<
-
-
+all: clean main lib1 lib2
 clean:
-	@rm -f ${TARGET}
-	@rm -rf ./*.dSYM
+	rm -rf *.out *.o
+lib1:
+	$(CC) -o blocks.so -fPIC -shared blocks.c -lm
+lib2:
+	$(CC) -o doubles.so -fPIC -shared doubles.c -lm
+
+main:
+	$(CC) -o main.out -ldl main.c 
